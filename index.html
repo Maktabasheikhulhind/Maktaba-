@@ -70,7 +70,7 @@ tr:hover td { background:#f9f5ed; }
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('/sw.js')
+    navigator.serviceWorker.register('./sw.js')
       .then(r => console.log('SW registered'))
       .catch(e => console.log('SW failed:', e));
   });
@@ -181,7 +181,7 @@ if('serviceWorker' in navigator){
   <div class="bismillah">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
   <div class="htitle">📚 مکتبہ شیخ الہند</div>
   <div class="hdate" id="hdate"></div>
-  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-07-19-stock2</div>
+  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-07-25-offline1</div>
   <div class="hbtns">
     <span id="role-badge"></span>
     <button id="sync-btn" class="hbtn" onclick="syncToCloud()">☁️ Sync</button>

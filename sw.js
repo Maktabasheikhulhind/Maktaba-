@@ -1,5 +1,5 @@
-const CACHE_NAME = 'maktaba-cache-v3';
-const FILES_TO_CACHE = ['/', '/index.html'];
+const CACHE_NAME = 'maktaba-cache-v4';
+const FILES_TO_CACHE = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -27,6 +27,6 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html')))
   );
 });
