@@ -1,4 +1,4 @@
-const CACHE_NAME = 'maktaba-cache-v4';
+const CACHE_NAME = 'maktaba-cache-v5';
 const FILES_TO_CACHE = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {

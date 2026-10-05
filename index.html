@@ -177,7 +177,7 @@ if('serviceWorker' in navigator){
   <div class="bismillah">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
   <div class="htitle">📚 مکتبہ شیخ الہند</div>
   <div class="hdate" id="hdate"></div>
-  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-09-04-bill2</div>
+  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-10-05-autosync</div>
   <div class="hbtns">
     <span id="role-badge"></span>
     <button id="sync-btn" class="hbtn" onclick="syncToCloud()">☁️ Sync</button>
@@ -1058,15 +1058,21 @@ function loginAs(role){
     const af=document.getElementById('adhar-new-form'); if(af) af.style.display='none';
   }
   toast(role==='admin'?'👑 ایڈمن موڈ — خوش آمدید':'👤 کیشیئر موڈ — خوش آمدید');
+  setTimeout(function(){try{autoSync();}catch(e){}},2500);
+  setTimeout(function(){try{backupReminder();}catch(e){}},7000);
 }
+var BACKUP_LS_KEYS=['ihsan_customers','bl_hist','bl_cnt','ihsan_misc','ihsan_orders','ihsan_rl','ihsan_del_adhar'];
 function exportData(){
-  const data = JSON.stringify(db, null, 2);
-  const blob = new Blob([data], {type:'application/json'});
+  const ls={};
+  BACKUP_LS_KEYS.forEach(function(k){ const v=localStorage.getItem(k); if(v!==null) ls[k]=v; });
+  const pack={__maktaba_backup:2,date:today(),db:db,ls:ls};
+  const blob = new Blob([JSON.stringify(pack)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `maktaba-backup-${today()}.json`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  toast('✅ Data export ہو گیا — فائل ڈاؤن لوڈ ہوئی');
+  try{localStorage.setItem('ihsan_last_backup',today());}catch(e){}
+  toast('✅ بیک اپ فائل ڈاؤن لوڈ ہو گئی — اسے محفوظ جگہ رکھیں');
 }
 function importData(input){
   const file = input.files[0];
@@ -1076,22 +1082,16 @@ function importData(input){
     try{
       const data = JSON.parse(e.target.result);
       if(!data || typeof data !== 'object'){ toast('❌ فائل درست نہیں'); return; }
-      if(!confirm('کیا آپ یہ data import کرنا چاہتے ہیں؟ موجودہ data replace ہو جائے گا۔')) return;
-      // سارے keys localStorage میں محفوظ کریں
-      Object.keys(data).forEach(k=>{
-        localStorage.setItem(k, typeof data[k]==='string' ? data[k] : JSON.stringify(data[k]));
-      });
-      // db دوبارہ لوڈ کریں
-      const saved = localStorage.getItem('db');
-      if(saved){ try{ Object.assign(db, JSON.parse(saved)); }catch(e){} }
-      save();
-      // سب کچھ دوبارہ render کریں
-      try{ renderDash(); }catch(e){}
-      try{ renderAdhar(); }catch(e){}
-      try{ renderLoans(); }catch(e){}
-      try{ renderKharcha(); }catch(e){}
-      try{ renderCashDash(); renderCashToday(); renderCashMonth(); }catch(e){}
-      toast('✅ Data import ہو گیا! سارا data بحال — اسٹاک چیک کریں');
+      let newDb=null, ls={};
+      if(data.__maktaba_backup && data.db){ newDb=data.db; ls=data.ls||{}; }
+      else if(data.sales || data.stock){ newDb=data; }   // پرانا فارمیٹ
+      else { toast('❌ یہ بیک اپ فائل درست نہیں'); return; }
+      if(!confirm('کیا آپ یہ بیک اپ بحال کرنا چاہتے ہیں؟ موجودہ ڈیٹا اس سے بدل جائے گا۔')) return;
+      localStorage.setItem('ihsan_db',JSON.stringify(newDb));
+      localStorage.setItem('ihsan_db_ver',DB_VER);
+      Object.keys(ls).forEach(function(k){ localStorage.setItem(k, ls[k]); });
+      toast('✅ بیک اپ بحال ہو گیا — ایپ دوبارہ کھل رہی ہے…');
+      setTimeout(function(){ location.reload(); },1200);
     } catch(err){
       toast('❌ فائل پڑھنے میں خرابی: ' + err.message);
     }
@@ -1134,7 +1134,7 @@ function loadDB(){
   db.stock=EXCEL_STOCK.map(s=>({...s,id:s.id||uid()})); db.sales=[]; db.kharcha=[]; db.adhar=[];
   saveDB();
 }
-function save(){ saveDB(); }
+function save(){ saveDB(); if(!window._syncing&&typeof schedAutoSync==='function') schedAutoSync(); }
 function loadRL(){ try{ const d=localStorage.getItem('ihsan_rl'); if(d) rateLists=JSON.parse(d); }catch(e){ rateLists=[]; } }
 function saveRL(){ try{ localStorage.setItem('ihsan_rl',JSON.stringify(rateLists)); }catch(e){} }
 
@@ -2434,7 +2434,10 @@ async function sbUpsert(table,body,conflictCol='id'){
   if(!res.ok) throw new Error(await res.text());
   return true;
 }
-async function syncToCloud(){
+async function syncToCloud(silent){
+  if(window._syncing) return;
+  window._syncing=true;
+  let purchError='', spError='';
   const btn=document.getElementById('sync-btn');
   btn.textContent='⏳';btn.disabled=true;
   try{
@@ -2538,13 +2541,13 @@ async function syncToCloud(){
         paytype:p.paytype||'نقد',purchase_date:p.date||today(),
         items_json:JSON.stringify(p.items||[])
       })));
-      const allCloudPu=await sbFetch('purchases','GET',null,'?order=created_at.desc&limit=500');
+      const allCloudPu=await sbFetchAll('purchases','?select=*');
       const localPuIds=new Set((db.purchases||[]).map(p=>p.id));
       allCloudPu.filter(p=>!localPuIds.has(p.id)).forEach(p=>{
         if(!db.purchases) db.purchases=[];
         db.purchases.unshift({id:p.id,supplier:p.supplier,inv:p.inv,grand:parseFloat(p.grand),paytype:p.paytype,date:p.purchase_date,items:JSON.parse(p.items_json||'[]')});
       });
-    }catch(e){ console.log('purchases sync skipped:',e.message); }
+    }catch(e){ purchError=(e.message||e).toString().substring(0,80); console.log('purchases sync skipped:',e.message); }
 
     // سپلائر ادائیگی sync
     try{
@@ -2554,13 +2557,13 @@ async function syncToCloud(){
       if(newSp.length) await sbFetch('supplier_payments','POST',newSp.map(p=>({
         id:p.id,supplier:p.supplier||'',amount:p.amount||0,pay_date:p.date||today(),note:p.note||''
       })));
-      const allCloudSp=await sbFetch('supplier_payments','GET',null,'?order=created_at.desc&limit=500');
+      const allCloudSp=await sbFetchAll('supplier_payments','?select=*');
       const localSpIds=new Set((db.supplierPayments||[]).map(p=>p.id));
       allCloudSp.filter(p=>!localSpIds.has(p.id)).forEach(p=>{
         if(!db.supplierPayments) db.supplierPayments=[];
         db.supplierPayments.unshift({id:p.id,supplier:p.supplier,amount:parseFloat(p.amount),date:p.pay_date,note:p.note});
       });
-    }catch(e){ console.log('supplier_payments sync skipped:',e.message); }
+    }catch(e){ spError=(e.message||e).toString().substring(0,80); console.log('supplier_payments sync skipped:',e.message); }
 
     // ریٹ لسٹ sync
     try{
@@ -2721,14 +2724,18 @@ async function syncToCloud(){
     try{renderCashDash();renderCashToday();renderCashMonth();}catch(e){}
     try{renderStock();}catch(e){}
     try{renderLoans();}catch(e){}
+    try{renderSupplierLedger();}catch(e){}
 
     const uploaded=newS.length+newK.length+newA.length+newCash.length;
     const downloaded=fromCloud.length;
-    toast(`✅ Sync مکمل! اپلوڈ: ${uploaded} | ڈاؤن لوڈ: ${downloaded} ریکارڈ | اسٹاک اپلوڈ: ${stockUploaded} | اسٹاک ڈاؤن لوڈ: ${stockDownloaded}${stockError?(' | ⚠️ اسٹاک خرابی: '+stockError):''}${cashError?(' | ⚠️ کیش خرابی: '+cashError):''}${loanError?(' | ⚠️ قرض خرابی: '+loanError):''}`);
+    const _anyErr=stockError||cashError||loanError||purchError||spError;
+    if(!silent||_anyErr||uploaded||downloaded||stockUploaded||stockDownloaded)
+    toast(`✅ Sync مکمل! اپلوڈ: ${uploaded} | ڈاؤن لوڈ: ${downloaded} ریکارڈ | اسٹاک اپلوڈ: ${stockUploaded} | اسٹاک ڈاؤن لوڈ: ${stockDownloaded}${stockError?(' | ⚠️ اسٹاک خرابی: '+stockError):''}${cashError?(' | ⚠️ کیش خرابی: '+cashError):''}${loanError?(' | ⚠️ قرض خرابی: '+loanError):''}${purchError?(' | ⚠️ خریداری خرابی: '+purchError):''}${spError?(' | ⚠️ سپلائر ادائیگی خرابی: '+spError):''}`);
   }catch(e){
     console.error('Sync error:', e);
-    toast('❌ Sync خرابی: ' + (e.message||e).toString().substring(0,50));
+    if(!silent) toast('❌ Sync خرابی: ' + (e.message||e).toString().substring(0,50));
   }
+  window._syncing=false;
   btn.textContent='☁️ Sync';btn.disabled=false;
 }
 
@@ -3753,6 +3760,28 @@ renderDash();
 renderTodaySales();
 renderKharcha();
 renderAdhar();
+
+// ===== AUTO SYNC (v2026-10-05) =====
+var _asTimer=null;
+function autoSync(){
+  if(!navigator.onLine||!currentRole||window._syncing) return;
+  syncToCloud(true);
+}
+function schedAutoSync(){
+  if(!navigator.onLine||!currentRole) return;
+  clearTimeout(_asTimer);
+  _asTimer=setTimeout(autoSync,30000);   // آخری تبدیلی کے 30 سیکنڈ بعد
+}
+window.addEventListener('online',function(){ setTimeout(autoSync,1500); });
+document.addEventListener('visibilitychange',function(){ if(!document.hidden) setTimeout(autoSync,1000); });
+setInterval(autoSync,300000);             // ہر 5 منٹ
+function backupReminder(){
+  try{
+    const last=localStorage.getItem('ihsan_last_backup');
+    const days=last?Math.floor((Date.now()-new Date(last).getTime())/86400000):999;
+    if(days>=7) toast('💾 بیک اپ لیے '+(last?days+' دن ہو گئے':'کبھی نہیں لیا')+' — اوپر 📤 Export دبائیں');
+  }catch(e){}
+}
 </script>
 </body>
 </html>
