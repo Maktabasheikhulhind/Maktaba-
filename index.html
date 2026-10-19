@@ -177,7 +177,7 @@ if('serviceWorker' in navigator){
   <div class="bismillah">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
   <div class="htitle">📚 مکتبہ شیخ الہند</div>
   <div class="hdate" id="hdate"></div>
-  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-10-05-autosync</div>
+  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-10-19-stockcheck</div>
   <div class="hbtns">
     <span id="role-badge"></span>
     <button id="sync-btn" class="hbtn" onclick="syncToCloud()">☁️ Sync</button>
@@ -274,6 +274,17 @@ if('serviceWorker' in navigator){
       <select id="s-comp" onchange="renderStock()"><option value="">-- تمام کمپنیاں --</option></select>
       <select id="s-loc" onchange="renderStock()"><option value="">-- تمام جگہیں --</option></select>
     </div>
+    <div class="row2">
+      <select id="s-chk" onchange="renderStock()">
+        <option value="">-- فزیکل چیک: سب --</option>
+        <option value="no">⬜ ابھی چیک نہیں ہوئیں</option>
+        <option value="today">📅 آج چیک کی ہوئیں</option>
+        <option value="yes">✅ چیک شدہ (سب)</option>
+        <option value="diff">⚠️ فرق والی (درست نہیں کیں)</option>
+      </select>
+      <button class="btnsm btnd" style="padding:10px;" onclick="chkNewRound()">🔄 نیا چیک شروع</button>
+    </div>
+    <div class="srinfo" id="chk-info" style="color:#1a6b3c;font-weight:700;"></div>
     <div class="twrap" id="stock-tbl"></div>
   </div>
   <div class="card">
@@ -1323,15 +1334,16 @@ function renderStock(){
   let items=db.stock.filter(s=>{
     const ql3=q.toLowerCase(); const nm=q?(s.name.includes(q)||(s.company&&s.company.toLowerCase().includes(ql3))||(s.sharh&&s.sharh.includes(q))||(s.code&&s.code.toLowerCase().includes(ql3))||(s.barcode&&s.barcode.toLowerCase().includes(ql3))||(s.cat&&s.cat.includes(q))||(s.location&&s.location.toLowerCase().includes(ql3))):true;
     const stF=sf==='low'?s.qty>0&&s.qty<=(s.minQty||5):sf==='out'?s.qty<=0:sf==='ok'?s.qty>(s.minQty||5):true;
-    return nm&&(cat?s.cat===cat:true)&&(cf?s.company===cf:true)&&(lf?s.location===lf:true)&&stF;
+    return nm&&(cat?s.cat===cat:true)&&(cf?s.company===cf:true)&&(lf?s.location===lf:true)&&stF&&chkMatch(s,(document.getElementById('s-chk')||{}).value||'');
   });
   const tv=db.stock.reduce((s,x)=>s+(x.price*x.qty),0);
   document.getElementById('sr-info').textContent=`نتائج: ${items.length} | کل: ${db.stock.length} | مالیت: ${fmt(tv)} ₨`;
+  chkInfo();
   const w=document.getElementById('stock-tbl');
   if(!items.length){w.innerHTML='<div class="empty">کوئی نتیجہ نہیں</div>';return;}
   const sh=items.slice(0,100);
   w.innerHTML=`${items.length>100?'<div style="font-size:0.7rem;color:#888;margin-bottom:5px;font-family:sans-serif;">پہلی 100 دکھائی جا رہی ہیں</div>':''}
-  <table><tr><th>کتاب</th><th>شرح/BC</th><th>کمپنی</th><th>تعداد</th><th>قیمت فروخت</th>${currentRole==='admin'?'<th style="background:#1a4f8b;color:#ffd700;font-size:0.68rem;">🔒 خرید</th>':''}<th>ٹوٹل</th><th>جگہ</th><th></th></tr>
+  <table><tr><th>کتاب</th><th>شرح/BC</th><th>کمپنی</th><th>تعداد</th><th>قیمت فروخت</th>${currentRole==='admin'?'<th style="background:#1a4f8b;color:#ffd700;font-size:0.68rem;">🔒 خرید</th>':''}<th>ٹوٹل</th><th>جگہ</th><th>چیک</th><th></th></tr>
   ${sh.map(s=>`<tr>
     <td style="max-width:110px;word-break:break-all;">${s.name}</td>
     <td style="font-size:0.7rem;color:#555;">${s.sharh||(s.code?'کوڈ:'+s.code:'-')}</td>
@@ -1341,6 +1353,7 @@ function renderStock(){
     ${currentRole==='admin'?`<td style="color:#1a4f8b;font-weight:700;background:#f0f4ff;font-size:0.75rem;">${fmt(s.cost||0)} ₨</td>`:''}
     <td style="font-weight:700;color:#1a6b3c;">${fmt(s.price*s.qty)} ₨</td>
     <td>${s.location||'-'}</td>
+    <td style="white-space:nowrap;font-size:0.7rem;">${chkCell(s)}<button class="btnsm btnp" style="background:#1a6b3c;color:#fff;" onclick="physCheck('${s.id}')">🔢</button></td>
     <td style="white-space:nowrap;">
       <button class="btnsm btnbl" onclick="editStock('${s.id}')">✏️</button>
       <button class="btnsm btnd" onclick="delStock('${s.id}')">🗑</button>
@@ -1395,6 +1408,58 @@ function saveEditStock(){
   s.cat=document.getElementById('edit-cat').value;
   markStockDirty(id);
   save();closeEditModal();renderStock();toast('✅ اپڈیٹ ہو گیا');
+}
+
+
+// ===== فزیکل اسٹاک چیک =====
+function getChecks(){ if(!db.stockChecks) db.stockChecks={}; return db.stockChecks; }
+function chkIsDiff(c){ return !!c && c.sys!==c.phys && !c.fix; }
+function chkMatch(s,v){
+  const c=(db.stockChecks||{})[s.id];
+  if(v==='yes') return !!c;
+  if(v==='no') return !c;
+  if(v==='today') return !!c && c.d===today();
+  if(v==='diff') return chkIsDiff(c);
+  return true;
+}
+function chkCell(s){
+  const c=(db.stockChecks||{})[s.id];
+  if(!c) return '<span style="color:#999;">⬜</span> ';
+  const dt=(c.d||'').slice(5);
+  return `<span style="color:${chkIsDiff(c)?'#c0392b':'#1a6b3c'};">${chkIsDiff(c)?'⚠️'+c.phys:'✅'} ${dt}</span> `;
+}
+function chkInfo(){
+  const el=document.getElementById('chk-info'); if(!el) return;
+  const ch=db.stockChecks||{};
+  let total=0,today_=0,diff=0;
+  db.stock.forEach(s=>{ const c=ch[s.id]; if(c){ total++; if(c.d===today()) today_++; if(chkIsDiff(c)) diff++; } });
+  el.textContent=`فزیکل چیک: ${total} / ${db.stock.length} | آج: ${today_} | باقی: ${db.stock.length-total} | فرق: ${diff}`;
+}
+function physCheck(id){
+  const s=db.stock.find(x=>x.id===id); if(!s) return;
+  const c=getChecks()[id];
+  const v=prompt(s.name+(s.company?' — '+s.company:'')+'\nسسٹم میں تعداد: '+(s.qty||0)+'\n\nفزیکل (گنی ہوئی) تعداد لکھیں:', c?c.phys:(s.qty||0));
+  if(v===null) return;
+  const phys=parseInt(v);
+  if(isNaN(phys)||phys<0){ toast('⚠️ درست تعداد لکھیں'); return; }
+  const sys=s.qty||0;
+  let fixed=false;
+  if(phys!==sys){
+    const diff=phys-sys;
+    if(confirm('سسٹم: '+sys+'  |  فزیکل: '+phys+'\nفرق: '+(diff>0?'+':'')+diff+'\n\nاسٹاک '+phys+' کر دیں؟\n\nOK = ہاں، اسٹاک درست کریں\nCancel = صرف فرق نوٹ کریں (اسٹاک نہ بدلے)')){
+      s.qty=phys; markStockDirty(id); fixed=true;
+    }
+  }
+  getChecks()[id]={d:today(),t:Date.now(),sys:sys,phys:phys,fix:fixed};
+  save(); renderStock();
+  toast(phys===sys?'✅ ٹھیک ہے — چیک ہو گئی':(fixed?'✅ اسٹاک درست کر کے چیک ہو گئی':'⚠️ فرق نوٹ ہو گیا'));
+}
+function chkNewRound(){
+  const n=Object.keys(db.stockChecks||{}).length;
+  if(!confirm('نیا فزیکل چیک شروع کریں؟\n\nاب تک کی '+n+' چیک شدہ نشانیاں صاف ہو جائیں گی (اسٹاک کی تعداد نہیں بدلے گی)۔')) return;
+  db.checkRound=(db.checkRound||0)+1;
+  db.stockChecks={};
+  save(); renderStock(); toast('🔄 نیا چیک شروع — سب ⬜ ہو گئیں');
 }
 
 // ===== SALE =====
@@ -2437,7 +2502,7 @@ async function sbUpsert(table,body,conflictCol='id'){
 async function syncToCloud(silent){
   if(window._syncing) return;
   window._syncing=true;
-  let purchError='', spError='';
+  let purchError='', spError='', chkError='';
   const btn=document.getElementById('sync-btn');
   btn.textContent='⏳';btn.disabled=true;
   try{
@@ -2564,6 +2629,21 @@ async function syncToCloud(silent){
         db.supplierPayments.unshift({id:p.id,supplier:p.supplier,amount:parseFloat(p.amount),date:p.pay_date,note:p.note});
       });
     }catch(e){ spError=(e.message||e).toString().substring(0,80); console.log('supplier_payments sync skipped:',e.message); }
+
+    // فزیکل اسٹاک چیک sync (settings ٹیبل، key=stock_checks)
+    try{
+      const rr=await sbFetch('settings','GET',null,'?key=eq.stock_checks&select=value');
+      let cloud=null; if(rr&&rr.length) cloud=JSON.parse(rr[0].value);
+      const lr=db.checkRound||0, cr=cloud?(cloud.round||0):0;
+      if(cloud&&cr>lr){ db.checkRound=cr; db.stockChecks=cloud.checks||{}; }
+      else{
+        if(!db.stockChecks) db.stockChecks={};
+        if(cloud&&cr===lr){ const cc=cloud.checks||{}; Object.keys(cc).forEach(function(id){ const l=db.stockChecks[id]; if(!l||(cc[id].t||0)>(l.t||0)) db.stockChecks[id]=cc[id]; }); }
+        const mine=JSON.stringify(db.stockChecks);
+        if(!cloud||JSON.stringify(cloud.checks||{})!==mine||cr!==lr)
+          await sbUpsert('settings',[{key:'stock_checks',value:JSON.stringify({round:db.checkRound||0,checks:db.stockChecks})}],'key');
+      }
+    }catch(e){ chkError=(e.message||e).toString().substring(0,60); console.log('stock_checks sync skipped:',e.message); }
 
     // ریٹ لسٹ sync
     try{
@@ -2730,7 +2810,7 @@ async function syncToCloud(silent){
     const downloaded=fromCloud.length;
     const _anyErr=stockError||cashError||loanError||purchError||spError;
     if(!silent||_anyErr||uploaded||downloaded||stockUploaded||stockDownloaded)
-    toast(`✅ Sync مکمل! اپلوڈ: ${uploaded} | ڈاؤن لوڈ: ${downloaded} ریکارڈ | اسٹاک اپلوڈ: ${stockUploaded} | اسٹاک ڈاؤن لوڈ: ${stockDownloaded}${stockError?(' | ⚠️ اسٹاک خرابی: '+stockError):''}${cashError?(' | ⚠️ کیش خرابی: '+cashError):''}${loanError?(' | ⚠️ قرض خرابی: '+loanError):''}${purchError?(' | ⚠️ خریداری خرابی: '+purchError):''}${spError?(' | ⚠️ سپلائر ادائیگی خرابی: '+spError):''}`);
+    toast(`✅ Sync مکمل! اپلوڈ: ${uploaded} | ڈاؤن لوڈ: ${downloaded} ریکارڈ | اسٹاک اپلوڈ: ${stockUploaded} | اسٹاک ڈاؤن لوڈ: ${stockDownloaded}${stockError?(' | ⚠️ اسٹاک خرابی: '+stockError):''}${cashError?(' | ⚠️ کیش خرابی: '+cashError):''}${loanError?(' | ⚠️ قرض خرابی: '+loanError):''}${purchError?(' | ⚠️ خریداری خرابی: '+purchError):''}${spError?(' | ⚠️ سپلائر ادائیگی خرابی: '+spError):''}${(!silent&&chkError)?(' | ⚠️ فزیکل چیک سنک نہیں ہوئی (صرف اسی ڈیوائس پر محفوظ): '+chkError):''}`);
   }catch(e){
     console.error('Sync error:', e);
     if(!silent) toast('❌ Sync خرابی: ' + (e.message||e).toString().substring(0,50));
