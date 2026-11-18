@@ -177,7 +177,7 @@ if('serviceWorker' in navigator){
   <div class="bismillah">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
   <div class="htitle">📚 مکتبہ شیخ الہند</div>
   <div class="hdate" id="hdate"></div>
-  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-10-19-stockcheck2</div>
+  <div style="font-size:0.7rem;color:#c8e6c9;text-align:center;opacity:0.85;">Build: v2026-11-18-secure</div>
   <div class="hbtns">
     <span id="role-badge"></span>
     <button id="sync-btn" class="hbtn" onclick="syncToCloud()">☁️ Sync</button>
@@ -971,11 +971,11 @@ function savePasswords(){
   localStorage.setItem('ihsan_pw', JSON.stringify(PASSWORDS));
   // Supabase upsert
   const url=SUPA_URL+'/rest/v1/settings';
-  fetch(url,{method:'POST',
-    headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,
+  sbEnsure().then(function(){ return fetch(url,{method:'POST',
+    headers:{'apikey':SUPA_KEY,'Authorization':authHdr(),
     'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
     body:JSON.stringify([{key:'passwords',value:JSON.stringify(PASSWORDS)}])
-  }).catch(e=>console.log('pw save err',e));
+  })}).catch(e=>console.log('pw save err',e));
 }
 function changePassword(role){
   if(role==='admin'){
@@ -1025,11 +1025,11 @@ function saveCashierTabConfig(){
   CASHIER_HIDDEN_TABS = [...el.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);
   localStorage.setItem('ihsan_cashier_tabs', JSON.stringify(CASHIER_HIDDEN_TABS));
   const url=SUPA_URL+'/rest/v1/settings';
-  fetch(url,{method:'POST',
-    headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,
+  sbEnsure().then(function(){ return fetch(url,{method:'POST',
+    headers:{'apikey':SUPA_KEY,'Authorization':authHdr(),
     'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
     body:JSON.stringify([{key:'cashier_tabs',value:JSON.stringify(CASHIER_HIDDEN_TABS)}])
-  }).catch(e=>console.log('cashier tabs save err',e));
+  })}).catch(e=>console.log('cashier tabs save err',e));
   applyCashierTabVisibility();
   toast('✅ کیشیئر ٹیب ترتیبات محفوظ ہو گئیں');
 }
@@ -2474,11 +2474,12 @@ function deleteRL(id){if(!confirm('مکمل حذف کریں؟'))return;delete te
 const SUPA_URL='https://vxrzbwknsncbhkrvbkli.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4cnpid2tuc25jYmhrcnZia2xpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTIyMjEsImV4cCI6MjA5NjE2ODIyMX0.5spVbqfbKJnEs4L-vt2hCEEN-w4E6VxuP3yFAedKaF0';
 async function sbFetch(table,method='GET',body=null,query=''){
+  await sbEnsure();
   const url=`${SUPA_URL}/rest/v1/${table}${query}`;
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(),40000);
   try{
-    const opts={method,headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${SUPA_KEY}`,'Content-Type':'application/json','Prefer':method==='POST'?'return=minimal':''},signal:ctrl.signal};
+    const opts={method,headers:{'apikey':SUPA_KEY,'Authorization':authHdr(),'Content-Type':'application/json','Prefer':method==='POST'?'return=minimal':''},signal:ctrl.signal};
     if(body) opts.body=JSON.stringify(body);
     const res=await fetch(url,opts);
     if(!res.ok) throw new Error(await res.text());
@@ -2491,6 +2492,7 @@ async function sbFetch(table,method='GET',body=null,query=''){
 }
 // بڑی ٹیبلز (جیسے stock_qty، 1000+ ریکارڈز) کے لیے — Supabase ایک درخواست میں زیادہ سے زیادہ 1000 ریکارڈز دیتا ہے، اس لیے صفحہ بہ صفحہ (pagination) پورا ڈیٹا حاصل کریں
 async function sbFetchAll(table,query='',pageSize=1000){
+  await sbEnsure();
   let all=[],from=0,pageNum=0;
   // pagination درست کام کرنے کے لیے ہر صفحے پر ریکارڈز کی ترتیب مستقل (stable) ہونی ضروری ہے — ورنہ Supabase ہر بار مختلف/دہرائے ہوئے ریکارڈز دے سکتا ہے اور صفحہ کبھی ختم نہیں ہوتا
   const orderedQuery = query ? (query.includes('order=') ? query : query + '&order=id.asc') : '?order=id.asc';
@@ -2502,7 +2504,7 @@ async function sbFetchAll(table,query='',pageSize=1000){
     let chunk;
     try{
       const res=await fetch(`${SUPA_URL}/rest/v1/${table}${orderedQuery}`,{
-        headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${SUPA_KEY}`,'Range-Unit':'items','Range':`${from}-${from+pageSize-1}`},
+        headers:{'apikey':SUPA_KEY,'Authorization':authHdr(),'Range-Unit':'items','Range':`${from}-${from+pageSize-1}`},
         signal:ctrl.signal
       });
       if(!res.ok) throw new Error(await res.text());
@@ -2520,14 +2522,21 @@ async function sbFetchAll(table,query='',pageSize=1000){
 }
 // اپسرٹ (insert-or-update): موجودہ id ہو تو اپڈیٹ، نہ ہو تو نیا ریکارڈ — stock_qty جیسی mutable ٹیبلز کے لیے
 async function sbUpsert(table,body,conflictCol='id'){
+  await sbEnsure();
   const url=`${SUPA_URL}/rest/v1/${table}?on_conflict=${conflictCol}`;
-  const opts={method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${SUPA_KEY}`,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(body)};
+  const opts={method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':authHdr(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(body)};
   const res=await fetch(url,opts);
   if(!res.ok) throw new Error(await res.text());
   return true;
 }
 async function syncToCloud(silent){
   if(window._syncing) return;
+  const _tk=await sbEnsure();
+  if(!_tk){
+    if(!silent) openCloudLogin();
+    else if(!window._askedCloud){ window._askedCloud=true; openCloudLogin(); }
+    return;
+  }
   window._syncing=true;
   let purchError='', spError='', chkError='';
   const btn=document.getElementById('sync-btn');
@@ -3889,6 +3898,63 @@ function backupReminder(){
     if(days>=7) toast('💾 بیک اپ لیے '+(last?days+' دن ہو گئے':'کبھی نہیں لیا')+' — اوپر 📤 Export دبائیں');
   }catch(e){}
 }
+
+// ===== کلاؤڈ لاگ اِن (Supabase Auth) =====
+function authHdr(){ return 'Bearer '+(window._sbTok||SUPA_KEY); }
+function _sbSaveSess(d){
+  try{ localStorage.setItem('maktaba_sb_sess',JSON.stringify({a:d.access_token,r:d.refresh_token,e:Date.now()+((d.expires_in||3600)*1000)})); }catch(e){}
+  window._sbTok=d.access_token;
+}
+var _sbRefreshing=null;
+async function sbEnsure(){
+  let ss=null; try{ ss=JSON.parse(localStorage.getItem('maktaba_sb_sess')||'null'); }catch(e){}
+  if(!ss||!ss.a) return null;
+  if(ss.e-Date.now()>60000){ window._sbTok=ss.a; return ss.a; }
+  if(!navigator.onLine) return null;
+  if(_sbRefreshing) return _sbRefreshing;
+  _sbRefreshing=(async function(){
+    try{
+      const r=await fetch(SUPA_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'apikey':SUPA_KEY,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:ss.r})});
+      const d=await r.json();
+      if(!r.ok||!d.access_token){ if(r.status===400||r.status===401){ localStorage.removeItem('maktaba_sb_sess'); window._sbTok=null; } return null; }
+      _sbSaveSess(d); return d.access_token;
+    }catch(e){ return null; }
+    finally{ _sbRefreshing=null; }
+  })();
+  return _sbRefreshing;
+}
+function openCloudLogin(){ const m=document.getElementById('cloud-modal'); if(m){ m.style.display='flex'; document.getElementById('cl-msg').textContent=''; } }
+function closeCloudLogin(){ const m=document.getElementById('cloud-modal'); if(m) m.style.display='none'; }
+async function cloudLogin(){
+  const em=document.getElementById('cl-email').value.trim(), pw=document.getElementById('cl-pass').value;
+  const msg=document.getElementById('cl-msg');
+  if(!em||!pw){ msg.textContent='⚠️ ای میل اور پاس ورڈ لکھیں'; return; }
+  msg.textContent='⏳ لاگ اِن ہو رہا ہے…';
+  try{
+    const r=await fetch(SUPA_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':SUPA_KEY,'Content-Type':'application/json'},body:JSON.stringify({email:em,password:pw})});
+    const d=await r.json();
+    if(!r.ok||!d.access_token){ msg.textContent='❌ ای میل یا پاس ورڈ غلط ہے'; return; }
+    _sbSaveSess(d);
+    document.getElementById('cl-pass').value='';
+    closeCloudLogin(); toast('✅ کلاؤڈ لاگ اِن ہو گیا');
+    setTimeout(function(){ syncToCloud(false); },400);
+  }catch(e){ msg.textContent='❌ نیٹ ورک کا مسئلہ — دوبارہ کوشش کریں'; }
+}
+function cloudLogout(){ try{ localStorage.removeItem('maktaba_sb_sess'); }catch(e){} window._sbTok=null; toast('کلاؤڈ سے لاگ آؤٹ ہو گیا'); }
 </script>
+
+<div id="cloud-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:99999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:14px;padding:18px;width:90%;max-width:340px;direction:rtl;text-align:right;">
+    <div style="font-size:1.05rem;font-weight:700;margin-bottom:6px;">☁️ کلاؤڈ لاگ اِن</div>
+    <div style="font-size:0.78rem;color:#555;margin-bottom:10px;">ڈیٹا کی حفاظت کے لیے ایک بار ای میل اور پاس ورڈ لکھیں۔ اس ڈیوائس پر یاد رہے گا۔</div>
+    <input id="cl-email" type="email" autocomplete="username" placeholder="ای میل" style="width:100%;padding:10px;margin-bottom:8px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;direction:ltr;">
+    <input id="cl-pass" type="password" autocomplete="current-password" placeholder="پاس ورڈ" style="width:100%;padding:10px;margin-bottom:8px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;direction:ltr;">
+    <div id="cl-msg" style="font-size:0.78rem;color:#c0392b;min-height:18px;margin-bottom:6px;"></div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="cloudLogin()" style="flex:1;padding:10px;background:#1a6b3c;color:#fff;border:none;border-radius:8px;font-weight:700;">لاگ اِن</button>
+      <button onclick="closeCloudLogin()" style="flex:1;padding:10px;background:#eee;border:none;border-radius:8px;">بعد میں</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
